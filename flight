@@ -1,0 +1,603 @@
+#!/usr/bin/python3
+
+#
+# Simple flight simulator in Python / pygame
+# Bobbi Webber-Manners
+# June/July 2024
+#
+#
+
+import math
+import os
+import time
+import sys
+import pygame
+
+import world
+#import pfd
+import steam
+import convert
+import wing_tables
+import engine
+
+
+# Modelled on Cessna 172
+# Aircraft model is based on ideas from here:
+# https://control.asu.edu/Classes/MMAE441/Aircraft/441Lecture8.pdf
+# https://control.asu.edu/Classes/MMAE441/Aircraft/441Lecture9.pdf
+# https://control.asu.edu/Classes/MMAE441/Aircraft/441Lecture10.pdf
+class Airplane:
+
+  ############################################################################
+  # Aircraft & physical constants
+  ############################################################################
+
+  empty_mass      = 767                 # Cessna 172, empty
+  fuel_capacity   = 212                 # 212 litre tank
+  init_tank_fill  = 0.5                 # Half tank at start-up
+  fuel_density    = 0.72                # kg/litre (Avgas)
+  pax_mass        = 100                 # Passengers, in kg
+  wing_area       = 16.17               # Cessna 172 wing area m^2
+  mac             = 1.49                # Mean chord in m
+  rho_0           = 1.225               # Density of air in kg/m^3 at sea level
+  g               = 9.81                # Acceleration due to gravity m/s^2
+
+  # Moments of inertia in the three axes
+  # Controls acceleration of rotation for each axis
+  # https://www.researchgate.net/publication/353752543_Cessna_172_Flight_Simulation_Data
+  roll_moi        = 2424.2
+  pitch_moi       = 2427.3
+  yaw_moi         = 4372.5
+  
+  # From http://www.temporal.com.au/c172.pdf, page 8
+  CoD_para        = 0.0223 * wing_area  # Determines amount of parasitic drag
+  
+  ############################################################################
+  # Aircraft state
+  ############################################################################
+
+  fuel_left       = 0.0                 # Left tank level in litres
+  fuel_right      = 0.0                 # Right tank level in litres
+  mass            = 0.0                 # Current mass, in kg
+  t               = 0.0                 # Simulation time, in seconds
+  rho             = 0.0                 # Local air density, in kg/m^3
+  tas             = 0.0                 # True air speed, in m/s
+  alpha           = 0.0                 # Angle of attack, in radians
+  thrust          = 0.0                 # Thrust, in Newtons
+  
+  # Wheels on the ground?
+  mode_air     = 0 # All wheels airborne
+  mode_fullgnd = 1 # All wheels on ground
+  mode_maingnd = 2 # Main wheels on ground, nose gear airborne
+  ground_mode = mode_fullgnd
+
+  ############################################################################
+  # Control positions
+  ############################################################################
+
+  aileron    = 0.0   # Aileron position (-1 -> +1)
+  elevator   = 0.0   # Elevator position (-1 -> +1)
+  rudder     = 0.0   # Rudder position (-1 -> +1)
+  flap       = 0.0   # Flap setting (0, 1, 2, 3)
+  throttle   = 0.0   # Thottle lever position (0 -> +1)
+  mixture    = 1.0   # Mixture lever position (0 -> +1)
+  trimalpha  = 0.0   # Trim angle-of-attack  TODO: UNUSED
+  pbrake     = True  # Parking brake
+  brake      = False # Wheel brakes
+  starter    = False # Engine starter
+  autorudder = True  # If True then automatically set rudder for balanced turn
+
+  ############################################################################
+  # Control positions
+  ############################################################################
+
+  # Miscellaneous params 
+  delta_t             = 0.025 # Simulation interval for computation
+  intervals_per_frame = 4     # Number of simulation intervals per frame
+  frame_int           = delta_t * intervals_per_frame # Frame interval
+  viewangle           = 0     # Direction of view in degrees (0 ahead)
+  zoom                = 1000
+
+  ############################################################################
+  # Linear position, velocity, acceleration
+  ############################################################################
+
+  # Linear positions in world frame of reference
+  n_world    = 3000.0 # North
+  e_world    = 0.0   # East
+  z_world    = 0.0   # Altitude in metres
+  z_d_world  = 0.0   # Rate of climb in metres / s
+ 
+  # Linear velocities in aircraft frame of reference
+  x_d        = 0.0   # Along principle axis, forward +ve
+  y_d        = 0.0   # 
+  z_d        = 0.0   #
+  
+  # Linear accelerations in aircraft frame of reference
+  x_dd       = 0.0
+  y_dd       = 0.0
+  z_dd       = 0.0
+  
+  ############################################################################
+  # Angular orientation, velocity, acceleration
+  ############################################################################
+
+  # Orientation
+  roll       = 0.0  # Positive right wing down, in radians
+  pitch      = 0.0  # Positive nose up, in radians
+  
+  # Orientation in world frame of reference
+  hdg        = math.pi  # In radians, 0 north
+  
+  # Angular velocities
+  roll_d     = 0.0  # Rate of change of roll
+  pitch_d    = 0.0  # Rate of change of pitch
+  yaw_d      = 0.0  # Rate of change of yaw
+  
+  # Angular accelerations
+  roll_dd    = 0.0  # Angular acceleration of roll
+  pitch_dd   = 0.0  # Angular acceleration of pitch
+  yaw_dd     = 0.0  # Angular acceleration of yaw
+  
+  ############################################################################
+  # Tunable Constants
+  # These are tuned by hand to obtain the desired flight characteristics
+  ############################################################################
+
+  # Control sensitivities
+  pitch_elev_sens = 15.0  # Elevator effect on pitch
+  roll_ail_sens   = 6.00  # Aileron effect on roll
+  roll_rudd_sens  = 3.00  # Rudder effect on roll
+  yaw_rudd_sens   = 8.00  # Rudder effect on yaw
+  yaw_adverse     = 20.0  # Adverse yaw - yaw sensitivity to roll-rate
+  yaw_sideslip    = 1e-3  # Weathervane effect - yaw sensitivity to sideslip
+  steer_sens      = 0.05  # Nosewheel steering sensitivity (on ground)
+  
+  # Resistance to rotation in the three axes
+  # Controls rate of rotation for each axis
+  roll_drag       = 20.0
+  pitch_drag      = 20.0
+  yaw_drag        = 20.0
+  
+  # Directional stability - tendency to return to wings-level
+  roll_stab       = 5.0 # Due to dihedral
+
+  ############################################################################
+
+  # Build a plane and make it fly!
+  def __init__(self):
+    self.fuel_left  = self.init_tank_fill * self.fuel_capacity / 2 # Litres
+    self.fuel_right = self.init_tank_fill * self.fuel_capacity / 2 # Litres
+    self.rho = self.rho_0
+    self.engine = engine.PistonEngine(self.frame_int)
+    self.run()
+
+  # Calculate CoL and CoD values
+  #
+  # Cessna 172 airfoil is a modified NACA 2412 profile.  See:
+  # http://airfoiltools.com/airfoil/details?airfoil=naca2412-il
+  #
+  # Parabolic model for CoD is from:
+  # 'Aircraft Separation in Uncontrolled Airspace including Human Factors'
+  # Thomas Haberkorn, p136 (2016 dissertation)
+  # Returns (CoL, CoD)
+  def calc_coefficients(self):
+    #reynolds = self.x_d * 1.5 / 1.42e-5 # Reynolds number
+    #print(f"Reynolds={reynolds:.2e}")
+    aoa_deg = convert.radtodeg(self.alpha)
+    crit_aoa = 15.0 # TODO Should vary with Reynolds number, strictly
+  
+    col = (2.8 / 30) * (aoa_deg + 2.5)
+    cod = 0.005 + 0.035 * (col - 0.14) ** 2;
+    if aoa_deg > crit_aoa:
+      col = (2.8 / 30) * ((+(crit_aoa * 2) - aoa_deg) + 2.5)
+    elif aoa_deg < -crit_aoa:
+      col = (2.8 / 30) * ((-(crit_aoa * 2) - aoa_deg) + 2.5)
+    if col < 0.0: # Can happen at extreme aoa
+      col = 0.0
+    return (col, cod)
+
+  # Use tables in wing_tables.py to lookup CoL, CoD, CoM
+  def lookup_coefficients(self):
+    aoa_deg = convert.radtodeg(self.alpha)
+    idx = int(round(aoa_deg)) + 180
+    #print("idx is ", idx)
+    (col, cod, com) = wing_tables.clean_tab[idx]
+    if self.flap > 0:
+      (dcol, dcod, dcom) = wing_tables.flap30_delta_tab[idx]
+      col += dcol * self.flap / 3
+      cod += dcod * self.flap / 3
+      com += dcom * self.flap / 3
+    return (col, cod, com)
+  
+  # Determine if encounter with the ground is a crash or a landing
+  def is_okay_landing(self):
+    pitch_min = (-5 / 180) * math.pi  # Any less and we bust the prop/nosegear
+    pitch_max = (35 / 180) * math.pi  # Any more and it's a tail-strike
+    roll_lim  = (20 / 180) * math.pi  # Any more and wingtip hits the ground
+    slip_lim  = 5                     # Sideslip limit in m/s^2
+    vrate_lim = 5                     # Max vert speed (~1000fpm)
+    ret = True
+    if self.pitch < pitch_min:
+      print("Prop or nose-gear got damaged")
+      ret = False
+    elif self.pitch > pitch_max:
+      print("Tail-strike")
+      ret = False
+    if math.fabs(self.roll) > roll_lim:
+      print("Too much roll")
+      ret = False
+    if math.fabs(self.y_d) > slip_lim:
+      print("Too much sideslip")
+      ret = False
+    if self.z_d_world < -vrate_lim:
+      print("Vertical speed too high")
+      ret = False
+    return ret
+  
+  # Handle all interactions with the ground
+  def handle_ground(self, D_x):
+    # Elevation of terrain assumed to be z_world==0 everywhere.
+    if self.z_world < 1e-3:
+      if self.ground_mode == self.mode_air:
+        # Were in the air, now on the ground
+        if self.is_okay_landing():
+          print('Landing!')
+          # TODO Additional landing logic, bounce etc.
+        else:
+          print('C R A S H')
+          return False
+  
+      # We are on the ground
+      # Simple model assumes either all wheels on ground, or both main gear only
+      print("On ground")
+      if self.pitch <= (4 / 180) * math.pi:
+        self.ground_mode = self.mode_fullgnd
+        print("All wheels on ground")
+        # All wheels on the ground
+        # Moment to pitch to horizontal due to nose and main gear
+        self.pitch_dd -= (0.5 * self.pitch + 1.0 * self.pitch_d)
+        # Moment due to nose wheel is on the ground. This prevents pitch < 0.
+        if self.pitch < 0:
+          self.pitch_dd -= 4.0 * self.pitch
+        max_brake_force = 4000 # Max brake force in N
+        # Nose wheel steering
+        self.yaw_d = self.rudder * self.steer_sens * self.x_d
+
+      elif self.pitch <= (45 / 180) * math.pi:
+        self.ground_mode = self.mode_maingnd
+        print("Main wheels on ground")
+        # Main wheels on the ground, but nosewheel airborne.
+        # No nose wheel steering. Can pitch up and down.
+        # Moment due to main gear (so nose eventually drops as airspeed is bled off)
+        self.pitch_dd -= (0.5 * self.pitch + 1.0 * self.pitch_d)
+        max_brake_force = 2500 # Max brake force in N (less effective with just main gear)
+        # TODO: Maybe implement pitch down moment if braking in this state
+      else:
+        print("Tailstrike!")
+        return False
+  
+      if self.pbrake == True:
+        print("** PBRAKE **")
+      if self.brake == True:
+        print("** BRAKE **")
+      brake_force = 0
+      if (self.pbrake == True or self.brake == True):
+        if self.x_d > 1e-3:
+          brake_force = max_brake_force
+        elif self.x_d < -1e-3:
+          brake_force = -max_brake_force
+  
+      self.x_dd = (self.thrust - D_x - brake_force) / self.mass  # Weight is on wheels now
+      self.y_dd = -self.y_d / self.delta_t                       # No sideslip with weight on wheels
+  
+      # If descending, make vertical speed zero
+      if self.z_dd < 0:
+        self.z_dd = -self.z_d / self.delta_t
+      
+      # Roll to horizontal due to oleos uncompressing on left and right main gear
+      self.roll_dd -= (5.0 * self.roll + 2.5 * self.roll_d)
+  
+    else:
+      if self.ground_mode != self.mode_air:
+        self.ground_mode = self.mode_air
+        print("Takeoff!")
+  
+    return True
+  
+  # Update simulation one time step
+  def update(self):
+ 
+    fuel_mass = (self.fuel_left + self.fuel_right) * self.fuel_density
+    self.mass = self.empty_mass + self.pax_mass + fuel_mass
+ 
+     # Variation of air density with altitude
+    # en.wikipedia.org/wiki/Density_of_air
+    self.rho = self.rho_0 * math.exp(-self.z_world / 10400)
+    self.tas = math.sqrt(self.rho_0 / self.rho) * self.x_d
+  
+    vel = math.sqrt(self.x_d * self.x_d + self.z_d * self.z_d)
+    if (vel < 0.1):
+      self.alpha = 0.0
+    else:
+      self.alpha = math.acos(self.x_d / vel) * (-1 if self.z_d > 0 else +1) + self.pitch
+    print(f"\nt (sec)     :  {self.t:f}")
+    print(f"Orientation :  {convert.radtodeg(self.roll):.1f}, {convert.radtodeg(self.pitch):.1f}, {convert.radtodeg(self.hdg):.1f}")
+    print(f"IAS (kts)   :  {convert.speedtoknots(self.x_d):.1f}")
+    print(f"TAS (kts)   :  {convert.speedtoknots(self.tas):.1f}")
+    print(f"Alt (ft)    :  {convert.metrestofeet(self.z_world):.0f}")
+    print(f"RoC (fpm)   :  {convert.speedtofeetpermin(self.z_d_world):.0f}")
+    print(f"AoA (deg)   :  {convert.radtodeg(self.alpha):.1f}")
+    
+    (CoL, CoD) = self.calc_coefficients()
+    print(f"OLD CoL, CoD     :  {CoL:.3f}, {CoD:.3f}")
+    (CoL, CoD, CoM) = self.lookup_coefficients()
+    print(f"CoL, CoD, CoM    :  {CoL:.3f}, {CoD:.3f}, {CoM:.3f}")
+  
+    q = self.x_d * self.x_d * self.rho / 2  # 'Dynamic pressure'
+  
+    #
+    # Note: We are computing forces and accelerations in the aircraft frame of reference,
+    # which is non-inertial.  We will correct for this further down ...
+    #
+  
+    # Linear forces in aircraft frame of reference
+    L           = CoL * q * self.wing_area # Lift
+    D_induced   = CoD * q * self.wing_area # Induced drag
+    D_parasitic = self.CoD_para * q        # Parasitic drag
+    D_x         = D_induced + D_parasitic  # Total drag in x direction
+    W           = self.mass * self.g       # Weight
+    if self.x_d < 0: # Drag in opposite direction to velocity (handles weird backwards case)
+      D_x = -D_x
+  
+    print(f"Forces      :  L={L:.1f}, W={W:.1f}, T={self.thrust:.1f}, D=({D_x:.1f})")
+    print(f"            :  D_induced={D_induced:.1f}, D_parasitic={D_parasitic:.1f}")
+  
+    # Linear accelerations in aircraft frame of reference
+    # x_dd is along the aircraft's axis, positive towards nose
+    # y_dd is across the wingspan, positive to the starboard wingtip
+    # z_dd is in the direction of the lift vector
+    self.x_dd = (self.thrust - D_x - W * math.sin(self.pitch)) / self.mass
+    self.y_dd = (W * math.cos(self.pitch) * math.sin(self.roll)) / self.mass
+    self.z_dd = (L - W * math.cos(self.pitch) * math.cos(self.roll)) / self.mass
+  
+    #
+    # Angular acceleration due to control inputs, in aircraft frame of reference
+    #
+  
+    # Roll angular acceleration ...
+    self.roll_dd = (self.roll_ail_sens * self.aileron +              # Proportional to aileron position
+                    self.roll_rudd_sens * self.rudder -              # Proportional to rudder position
+                    self.roll_drag * self.roll_d -                   # Roll-drag (limits rate of roll acceleration)
+                    self.roll_stab * self.roll                       # Roll stability due to dihedral
+                    ) * q / self.roll_moi                            # Acceleration proportional to dynamic pressure
+ 
+    # Pitch angular acceleration ...
+    self.pitch_dd = (CoM * self.wing_area * self.mac +               # Due to CoM of wing and horiz stab
+                     self.pitch_elev_sens * self.elevator -          # Proportional to elevator position
+                     self.pitch_drag * self.pitch_d                  # Pitch-drag (limits rate of pitch acceleration)
+                     ) * q / self.pitch_moi                          # Acceleration proportional to dynamic pressure
+  
+    # If autorudder is True, and we are airborne, automatically set rudder to make a balanced turn
+    if self.autorudder == True and self.x_d > 1e-3 and self.z_world > 10:
+      yaw_d_target = self.y_dd / self.x_d                            # Target yaw_d for coordinated turn
+      yaw_dd_target = (yaw_d_target - self.yaw_d) / self.delta_t     # Target yaw_dd to hit yaw_d in next sim interval
+  
+      # Compute target rudder input by rearranging expression for yaw_dd below
+      # to make the rudder input the subject
+      self.rudder = ((yaw_dd_target * self.yaw_moi) /
+                q + self.yaw_adverse * self.roll_d + self.yaw_drag * self.yaw_d) / self.yaw_rudd_sens
+      if self.rudder > 1.0:
+        self.rudder = 1.0
+      if self.rudder < -1.0:
+        self.rudder = -1.0
+  
+    # Yaw angular acceleration ...
+    self.yaw_dd = (self.yaw_rudd_sens * self.rudder -    # Proportional to rudder input
+                   self.yaw_adverse * self.roll_d -      # Inversely proportional to roll rate (adverse yaw)
+                   self.yaw_drag * self.yaw_d            # Yaw-drag (limits rate of yaw acceleration)
+                   ) * q / self.yaw_moi                  # Acceleration proportional to dynamic pressure
+
+    # Effect of sideslip y_d on tailfin
+    # This is the weathervane effect where the aircraft tends to yaw
+    # into the oncoming wind.  Also causes roll-yaw coupling.
+    sideslip_yaw_dd = self.y_d * self.y_d * self.rho * self.yaw_sideslip
+    if self.y_d > 0:
+      self.yaw_dd += sideslip_yaw_dd
+    else:
+      self.yaw_dd -= sideslip_yaw_dd
+  
+    print(f"Ang Accels  :  R={self.roll_dd:.2f}, P={self.pitch_dd:.2f}, Y={self.yaw_dd:.2f}")
+  
+    if self.handle_ground(D_x) == False:
+      print('Bailing out')
+      pygame.quit()
+      sys.exit()
+  
+    # Integrate angular accelerations to angular rates
+    self.roll_d  = self.roll_d  + self.delta_t * self.roll_dd
+    self.pitch_d = self.pitch_d + self.delta_t * self.pitch_dd
+    self.yaw_d   = self.yaw_d   + self.delta_t * self.yaw_dd
+  
+    # Now to correct for the non-inertial frame of the aircraft, we have to account for
+    # centrifugal and coriolis terms.  I believe coriolis can be ignored (for a low
+    # performance aircraft like a Cessna).  I also think we can ignore the along track
+    # effect on x_dd.  So ... just centrifugal term for yaw and pitch. 
+    self.y_dd -= self.yaw_d * self.x_d   # y_dd is now just any remaining slideslip after turn taken into account
+    self.z_dd -= self.pitch_d * self.x_d # z_dd is now remaining amount after pitch rate taken into account
+  
+    # Integrate angular rates to angles in world coordinates
+    # ie: Compute roll, pitch, heading
+    self.roll  += self.delta_t * self.roll_d
+    self.pitch += (self.pitch_d * math.cos(self.roll) - self.yaw_d   * math.sin(self.roll)) * self.delta_t
+    self.hdg   += (self.yaw_d   * math.cos(self.roll) + self.pitch_d * math.sin(self.roll)) * self.delta_t
+  
+    # Handle pitch crossing +/- 90 degrees
+    if self.pitch > math.pi / 2 or self.pitch < -math.pi / 2:
+      self.pitch = math.pi - self.pitch
+      self.roll += math.pi
+      self.hdg += math.pi
+  
+    # Clamp angles to normal range
+    self.roll   = (self.roll + math.pi) % (math.pi * 2) - math.pi
+    self.pitch  = (self.pitch + math.pi) % (math.pi * 2) - math.pi
+    self.hdg    = self.hdg % (math.pi * 2)
+  
+    print(f"Accels      :  X={self.x_dd:.2f}, Y={self.y_dd:.2f}, Z={self.z_dd:.2f}")
+  
+    # Integrate linear accelerations to linear rates
+    self.x_d = self.x_d + self.delta_t * self.x_dd
+    self.y_d = self.y_d + self.delta_t * self.y_dd
+    self.z_d = self.z_d + self.delta_t * self.z_dd
+  
+    print(f"Speeds      :  {self.x_d:.2f}, {self.y_d:.2f}, {self.z_d:.2f}")
+    
+    # Don't go backwards!
+    if self.z_d_world > 0.1 and self.x_d <= 0.0:
+      self.x_d = 10.0 # Enough speed for some elevator effectiveness so we don´t deep stall
+  
+    # Integrate linear rates to displacements in world coordinates
+    # Compute x, y, z in world coordinates
+    # Math from en.wikipedia.org/wiki/Rotation_matrix
+    mpitch = -self.pitch
+    self.n_world = self.n_world + self.delta_t * (self.tas * (math.cos(self.hdg) * math.cos(mpitch)) +
+                                   self.y_d * (math.cos(self.hdg) * math.sin(mpitch) * math.sin(self.roll) -
+                                          math.sin(self.hdg) * math.cos(self.roll)) +
+                                   self.z_d * (math.cos(self.hdg) * math.sin(mpitch) * math.cos(self.roll) +
+                                          math.sin(self.hdg) * math.sin(self.roll)))
+    self.e_world = self.e_world + self.delta_t * (self.tas * (math.sin(self.hdg) * math.cos(mpitch)) +
+                                   self.y_d * (math.sin(self.hdg) * math.sin(mpitch) * math.sin(self.roll) +
+                                          math.cos(self.hdg) * math.cos(self.roll)) +
+                                   self.z_d * (math.sin(self.hdg) * math.sin(mpitch) * math.cos(self.roll) -
+                                          math.cos(self.hdg) * math.sin(self.roll)))
+    self.z_d_world = (self.tas * (-math.sin(mpitch)) -
+                 self.y_d * (math.cos(mpitch) * math.sin(self.roll)) +
+                 self.z_d * (math.cos(mpitch) * math.cos(self.roll)))
+    self.z_world = self.z_world + self.delta_t * self.z_d_world
+  
+    self.t = self.t + self.delta_t
+  
+    self.z_world = self.z_world if self.z_world > 0 else 0.0
+
+  def run(self):
+    clock = pygame.time.Clock()
+    while True:
+#      os.system('clear') # Ugly but will do for now
+      print("% Busy: ", clock.get_rawtime() / (self.frame_int * 1000))
+      clock.tick(1 / self.frame_int)
+      events = pygame.event.get()
+      for event in events:
+        if event.type == pygame.QUIT:
+          pygame.quit()
+          sys.exit()
+        # Key map mostly inspired by A2FS2
+        if event.type == pygame.KEYDOWN:
+          if event.key == pygame.K_t:
+            self.elevator -= 0.02
+          elif event.key == pygame.K_b:
+            self.elevator += 0.02
+          elif event.key == pygame.K_f:
+            self.aileron -= 0.05
+          elif event.key == pygame.K_g:
+            self.aileron = 0.0
+          elif event.key == pygame.K_h:
+            self.aileron += 0.05
+          elif event.key == pygame.K_MINUS:
+            self.throttle -= 0.02
+          elif event.key == pygame.K_EQUALS:
+            self.throttle += 0.02
+          elif event.key == pygame.K_LEFTBRACKET: # [
+            self.mixture -= 0.02
+          elif event.key == pygame.K_RIGHTBRACKET: # ]
+            self.mixture += 0.02
+          elif event.key == pygame.K_r:
+            self.trimalpha -= 0.001
+            print('trim ', convert.radtodeg(self.trimalpha))
+          elif event.key == pygame.K_v:
+            self.trimalpha += 0.001
+            print('trim ', convert.radtodeg(self.trimalpha))
+          elif event.key == pygame.K_y:
+            if self.flap > 0:
+              self.flap -= 1
+          elif event.key == pygame.K_n:
+            if self.flap < 3:
+              self.flap += 1
+          elif event.key == pygame.K_c:
+            self.rudder -= 0.05
+          elif event.key == pygame.K_m:
+            self.rudder += 0.05
+          elif event.key == pygame.K_p:
+            self.pbrake = True if self.pbrake == False else False
+          elif event.key == pygame.K_SPACE:
+            self.brake = True
+          elif event.key == pygame.K_s:
+            self.starter = True
+          elif event.key == pygame.K_z: # TODO: Need a better mapping for this
+            if self.autorudder == True:
+              self.autorudder = False
+            else:
+              self.autorudder = True
+          elif event.key == pygame.K_KP8:
+            self.viewangle = 0
+          elif event.key == pygame.K_KP9:
+            self.viewangle = 45
+          elif event.key == pygame.K_KP6:
+            self.viewangle = 90
+          elif event.key == pygame.K_KP3:
+            self.viewangle = 135
+          elif event.key == pygame.K_KP2:
+            self.viewangle = 180
+          elif event.key == pygame.K_KP1:
+            self.viewangle = -135
+          elif event.key == pygame.K_KP4:
+            self.viewangle = -90
+          elif event.key == pygame.K_KP7:
+            self.viewangle = -45
+        if event.type == pygame.KEYUP:
+          if event.key == pygame.K_SPACE:
+            self.brake = False
+ 
+      t1 = pygame.time.get_ticks() 
+
+      (self.rpm, self.thrust, self.fuel_flow, self.egt) = self.engine.update(self.tas, self.throttle, self.mixture, self.starter, self.rho, self.z_world, self.fuel_left + self.fuel_right)
+      self.starter = False
+
+      ff = convert.lbstokgs(self.fuel_flow) / (60 * 60) # kg/s
+      self.fuel_left  -= (ff / 2) / self.fuel_density
+      self.fuel_right -= (ff / 2) / self.fuel_density
+
+      t2 = pygame.time.get_ticks() 
+      for i in range(0, self.intervals_per_frame):
+        self.update()
+
+      t3 = pygame.time.get_ticks() 
+      steam.draw(self.roll, self.pitch, self.hdg, self.yaw_d, self.x_d, self.z_world, self.z_d_world,
+                 self.aileron, self.elevator, self.rudder, self.throttle, self.mixture, self.flap, self.autorudder,
+                 self.y_dd, self.alpha, self.rpm, self.fuel_flow, self.egt, self.fuel_left, self.fuel_right)
+
+      t4 = pygame.time.get_ticks() 
+      wrld.show(self.n_world, self.e_world, self.z_world, -self.roll, -self.pitch, -self.hdg, self.zoom, self.viewangle)
+
+      t5 = pygame.time.get_ticks() 
+
+      t_delta_1 = t2 - t1
+      t_delta_2 = t3 - t2
+      t_delta_3 = t4 - t3
+      t_delta_4 = t5 - t2
+      print(f"Time elapsed: {t_delta_1:d}ms {t_delta_2:d}ms {t_delta_3:d}ms {t_delta_4:d}ms")
+
+#
+# Entry point ...
+#
+    
+pygame.init()
+display = pygame.display.set_mode((1600, 900))
+steam   = steam.Steam(display, (0, 450), (1600, 450))
+wrld    = world.World(display, (0, 0), (1600, 450))
+pygame.display.set_caption('Flight Simulator')
+pygame.key.set_repeat(200, 200) # 200 millisec repeat
+
+# Go be an airplane  
+airplane = Airplane() 
+
+  

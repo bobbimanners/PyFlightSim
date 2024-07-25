@@ -1,0 +1,13 @@
+Flight Sim - TODO
+
+- Improve engine model
+  - Windmilling prop
+- Improve flight model
+  - Trim ! (easy)
+  - Remove as many fudge factors as we can
+  - Optimize precomputing trig
+- World model
+  - Method to quickly filter out objects that are not in FOV
+  - LOD
+- Speed up!
+
