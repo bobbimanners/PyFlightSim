@@ -27,7 +27,7 @@ The keys for the control surfaces (elevator, ailerons, rudder, flaps and trim) a
 ```
    R  T  Y
    F  G  H
-C  V  B  N M
+C  V  B  N  M
 ```
 The 'stick' is controlled by:
 ```
