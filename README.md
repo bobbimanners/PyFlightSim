@@ -5,7 +5,19 @@ Simple flight simulator written in Python 3 / Pygame.
 
 # What is PyFlightSim
 
+PyFlightSim is a simple flight simulator written in Python as a prototype for a future 8-bit implementation.  It is based on the Cessna 172 and tries to use real specifications where I could find them.  Check the "References" folder if you are interested in some of the real-world data I used to develop the flight model.
+
+It is a true simulation based on Newton's second law of motion.  The coefficient of lift, coefficient of drag and moment of lift data for the Cessna 172 were obtained from [this paper](https://github.com/bobbimanners/PyFlightSim/blob/main/References/Cessna172-FlightSimulationData.pdf), which is based on a computational fluid dynamics (CFD) simulation.
+
+The 3D engine is implemented from scratch without the use of OpenGL and supports wireframe graphics with shaded polygons.  The shaded polygons are used for the display of the runway, the centreline stripes and also any lakes or other coloured regions of the ground.
+
+The code is intentionally as simple as possible with a view to being implemented on a much smaller computer in future (such as 8 bit or 16 bit architectures.)  It may also be useful to those trying to understand the physics of flight simulation or techniques for projecting wireframe graphics.
+
 # Prerequisites
+
+- Python 3
+- Pygame library
+- SDL2 (used by Pygame)
 
 # Key Mapping
 
