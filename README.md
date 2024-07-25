@@ -75,7 +75,7 @@ The `8` key will return you to the normal forwards looking view.
 
 - Press `S` to fire the starter.  Idle is around 600RPM.
 - Disengage the parking brake with `P`.
-- Advance the throttle to max by holding down `=` until the throttle is at the top (red circle).
+- Advance the throttle to max by holding down `=` until the throttle is at the top (black circle).
 - Plane will begin rolling forwards.
 - Once you have around 60kts, smoothly pull back on the stick by hitting `B` a few times.  The nose should rise and the aircraft will be begin to climb.
 - Establish an approximate 65kt climb (around 7 degrees nose up, 2700 RPM).
