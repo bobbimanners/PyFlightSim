@@ -507,7 +507,7 @@ class Steam:
     y += border
     pygame.draw.rect(self.imgbuf, self.red, (x, y, size, size), 1)
     pygame.draw.circle(self.imgbuf, self.red,
-                       (x+size/2+size/2*self.aileron, y+size/2+size*self.elevator), r20)
+                       (x+size/2+size/2*self.aileron, y+size/2+size/2*self.elevator), r20)
     pygame.draw.circle(self.imgbuf, self.red,
                        (x+size/2+size/2*self.rudder, y+size), r20,
                        1 if self.autorudder == True else 0)

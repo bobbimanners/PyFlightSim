@@ -88,10 +88,9 @@ class Airplane:
   autorudder = True  # If True then automatically set rudder for balanced turn
 
   ############################################################################
-  # Control positions
+  # Miscellaneous params 
   ############################################################################
 
-  # Miscellaneous params 
   delta_t             = 0.025 # Simulation interval for computation
   intervals_per_frame = 4     # Number of simulation intervals per frame
   frame_int           = delta_t * intervals_per_frame # Frame interval
@@ -493,23 +492,33 @@ class Airplane:
         # Key map mostly inspired by A2FS2
         if event.type == pygame.KEYDOWN:
           if event.key == pygame.K_t:
-            self.elevator -= 0.02
+            if self.elevator > -1.0:
+              self.elevator -= 0.02
+              print("********************************", self.elevator)
           elif event.key == pygame.K_b:
-            self.elevator += 0.02
+            if self.elevator < +1.0:
+              self.elevator += 0.02
+              print("********************************", self.elevator)
           elif event.key == pygame.K_f:
-            self.aileron -= 0.05
+            if self.aileron > -1.0:
+              self.aileron -= 0.05
           elif event.key == pygame.K_g:
             self.aileron = 0.0
           elif event.key == pygame.K_h:
-            self.aileron += 0.05
+            if self.aileron < +1.0:
+              self.aileron += 0.05
           elif event.key == pygame.K_MINUS:
-            self.throttle -= 0.02
+            if self.throttle > 0.0:
+              self.throttle -= 0.02
           elif event.key == pygame.K_EQUALS:
-            self.throttle += 0.02
+            if self.throttle < 1.0:
+              self.throttle += 0.02
           elif event.key == pygame.K_LEFTBRACKET: # [
-            self.mixture -= 0.02
+            if self.mixture > 0.0:
+              self.mixture -= 0.02
           elif event.key == pygame.K_RIGHTBRACKET: # ]
-            self.mixture += 0.02
+            if self.mixture < 1.0:
+              self.mixture += 0.02
           elif event.key == pygame.K_r:
             self.trimalpha -= 0.001
             print('trim ', convert.radtodeg(self.trimalpha))
@@ -523,9 +532,11 @@ class Airplane:
             if self.flap < 3:
               self.flap += 1
           elif event.key == pygame.K_c:
-            self.rudder -= 0.05
+            if self.rudder > -1.0:
+              self.rudder -= 0.05
           elif event.key == pygame.K_m:
-            self.rudder += 0.05
+            if self.rudder < 1.0:
+              self.rudder += 0.05
           elif event.key == pygame.K_p:
             self.pbrake = True if self.pbrake == False else False
           elif event.key == pygame.K_SPACE:
