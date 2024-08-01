@@ -31,11 +31,15 @@ class Airplane:
   joystick        = -1                  # Joystick object, if device found
   js_enabled      = False               # True if joystick is enabled
   
-  axis_pitch      = 1
+  axis_pitch      = 1                   # Joystick axes
   axis_roll       = 0
   axis_throt      = 2
   js_cent_pitch   = 0.0                 # For calibrating centre position with Alt-J
   js_cent_roll    = 0.0
+
+  slew_mode       = False               # False for normal flying, True for slew mode
+  slew_metres     = 5.0                 # Step angle in metres for slew mode
+  slew_angle      = 0.5                 # Step angle in degrees for slew mode
 
   ############################################################################
   # Aircraft & physical constants
@@ -349,8 +353,8 @@ class Airplane:
     print(f"RoC (fpm)   :  {convert.speedtofeetpermin(self.z_d_world):.0f}")
     print(f"AoA (deg)   :  {convert.radtodeg(self.alpha):.1f}")
     
-    (CoL, CoD) = self.calc_coefficients()
-    print(f"OLD CoL, CoD     :  {CoL:.3f}, {CoD:.3f}")
+    #(CoL, CoD) = self.calc_coefficients()
+    #print(f"OLD CoL, CoD     :  {CoL:.3f}, {CoD:.3f}")
     (CoL, CoD, CoM) = self.lookup_coefficients()
     print(f"CoL, CoD, CoM    :  {CoL:.3f}, {CoD:.3f}, {CoM:.3f}")
   
@@ -506,54 +510,98 @@ class Airplane:
 #      os.system('clear') # Ugly but will do for now
       print("% Busy: ", clock.get_rawtime() / (self.frame_int * 1000))
       clock.tick(1 / self.frame_int)
+
+      # Handle joystick, if enabled
+      if self.js_enabled == True:
+        self.elevator = self.joystick.get_axis(self.axis_pitch) - self.js_cent_pitch
+        self.aileron  = self.joystick.get_axis(self.axis_roll) - self.js_cent_roll
+        self.throttle = (self.joystick.get_axis(self.axis_throt)-1.0) / -2
+
       events = pygame.event.get()
       for event in events:
         if event.type == pygame.QUIT:
           pygame.quit()
           sys.exit()
 
-        # Handle joystick, if enabled
-        if self.js_enabled == True:
-          self.elevator = self.joystick.get_axis(self.axis_pitch) - self.js_cent_pitch
-          self.aileron  = self.joystick.get_axis(self.axis_roll) - self.js_cent_roll
-          self.throttle = (self.joystick.get_axis(self.axis_throt)-1.0) / -2
-
         # Key map mostly inspired by A2FS2
         if event.type == pygame.KEYDOWN:
-          if event.key == pygame.K_t:
-            if self.elevator > -1.0:
-              self.elevator -= 0.02
-              print("********************************", self.elevator)
-          elif event.key == pygame.K_b:
-            if self.elevator < +1.0:
-              self.elevator += 0.02
-              print("********************************", self.elevator)
-          elif event.key == pygame.K_f:
-            if self.aileron > -1.0:
-              self.aileron -= 0.05
-          elif event.key == pygame.K_g:
-            self.aileron = 0.0
-          elif event.key == pygame.K_h:
-            if self.aileron < +1.0:
-              self.aileron += 0.05
-          elif event.key == pygame.K_MINUS:
-            if self.throttle > 0.0:
-              self.throttle -= 0.02
-          elif event.key == pygame.K_EQUALS:
-            if self.throttle < 1.0:
-              self.throttle += 0.02
-          elif event.key == pygame.K_LEFTBRACKET: # [
+          if self.slew_mode == True:
+            #
+            # Slew Mode Keys
+            #
+            if event.key == pygame.K_t:
+              self.n_world += self.slew_metres
+            elif event.key == pygame.K_b:
+              self.n_world -= self.slew_metres
+            if event.key == pygame.K_f:
+              self.e_world -= self.slew_metres
+            if event.key == pygame.K_g:
+              self.roll  = 0.0
+              self.pitch = 0.0
+            elif event.key == pygame.K_h:
+              self.e_world += self.slew_metres
+            elif event.key == pygame.K_MINUS:
+              self.z_world -= self.slew_metres
+            elif event.key == pygame.K_EQUALS:
+              self.z_world += self.slew_metres
+            elif event.key == pygame.K_r:
+              self.roll -= convert.degtorad(self.slew_angle)
+            elif event.key == pygame.K_y:
+              self.roll += convert.degtorad(self.slew_angle)
+            elif event.key == pygame.K_v:
+              self.hdg -= convert.degtorad(self.slew_angle)
+            elif event.key == pygame.K_n:
+              self.hdg += convert.degtorad(self.slew_angle)
+            elif event.key == pygame.K_8:
+              self.pitch -= convert.degtorad(self.slew_angle)
+            elif event.key == pygame.K_9:
+              self.pitch += convert.degtorad(self.slew_angle)
+            elif event.key == pygame.K_s: # Ctrl-S to turn off slew_mode
+              if event.mod & pygame.KMOD_LCTRL:
+                self.slew_mode = False
+          else:
+            #
+            # Flight Mode Keys
+            #
+            if event.key == pygame.K_t:
+              if self.elevator > -1.0:
+                self.elevator -= 0.02
+            elif event.key == pygame.K_b:
+              if self.elevator < +1.0:
+                self.elevator += 0.02
+            elif event.key == pygame.K_f:
+              if self.aileron > -1.0:
+                self.aileron -= 0.05
+            elif event.key == pygame.K_g:
+              self.aileron = 0.0
+            elif event.key == pygame.K_h:
+              if self.aileron < +1.0:
+                self.aileron += 0.05
+            elif event.key == pygame.K_MINUS:
+              if self.throttle > 0.0:
+                self.throttle -= 0.02
+            elif event.key == pygame.K_EQUALS:
+              if self.throttle < 1.0:
+                self.throttle += 0.02
+            elif event.key == pygame.K_r:
+              self.trimalpha -= 0.001
+              print('trim ', convert.radtodeg(self.trimalpha))
+            elif event.key == pygame.K_v:
+              self.trimalpha += 0.001
+              print('trim ', convert.radtodeg(self.trimalpha))
+            elif event.key == pygame.K_s: # Ctrl-S to turn on slew_mode
+              if event.mod & pygame.KMOD_LCTRL:
+                self.slew_mode = True
+
+          #
+          # Both modes
+          #
+          if event.key == pygame.K_LEFTBRACKET: # [
             if self.mixture > 0.0:
               self.mixture -= 0.02
           elif event.key == pygame.K_RIGHTBRACKET: # ]
             if self.mixture < 1.0:
               self.mixture += 0.02
-          elif event.key == pygame.K_r:
-            self.trimalpha -= 0.001
-            print('trim ', convert.radtodeg(self.trimalpha))
-          elif event.key == pygame.K_v:
-            self.trimalpha += 0.001
-            print('trim ', convert.radtodeg(self.trimalpha))
           elif event.key == pygame.K_y:
             if self.flap > 0:
               self.flap -= 1
@@ -571,7 +619,8 @@ class Airplane:
           elif event.key == pygame.K_SPACE:
             self.brake = True
           elif event.key == pygame.K_s:
-            self.starter = True
+            if event.mod & pygame.KMOD_LCTRL == False:
+              self.starter = True
           elif event.key == pygame.K_j: # Ctrl-J to toggle joystick
             if event.mod & pygame.KMOD_LCTRL:
               self.js_enabled = not self.js_enabled
@@ -600,19 +649,22 @@ class Airplane:
         if event.type == pygame.KEYUP:
           if event.key == pygame.K_SPACE:
             self.brake = False
- 
+
       t1 = pygame.time.get_ticks() 
 
-      (self.rpm, self.thrust, self.fuel_flow, self.egt) = self.engine.update(self.tas, self.throttle, self.mixture, self.starter, self.rho, self.z_world, self.fuel_left + self.fuel_right)
-      self.starter = False
+      if self.slew_mode == False:
+        (self.rpm, self.thrust, self.fuel_flow, self.egt) = self.engine.update(self.tas, self.throttle, self.mixture, self.starter, self.rho, self.z_world, self.fuel_left + self.fuel_right)
+        self.starter = False
 
-      ff = convert.lbstokgs(self.fuel_flow) / (60 * 60) # kg/s
-      self.fuel_left  -= (ff / 2) / self.fuel_density
-      self.fuel_right -= (ff / 2) / self.fuel_density
+        ff = convert.lbstokgs(self.fuel_flow) / (60 * 60) # kg/s
+        self.fuel_left  -= (ff / 2) / self.fuel_density
+        self.fuel_right -= (ff / 2) / self.fuel_density
 
-      t2 = pygame.time.get_ticks() 
-      for i in range(0, self.intervals_per_frame):
-        self.update()
+        t2 = pygame.time.get_ticks() 
+        for i in range(0, self.intervals_per_frame):
+          self.update()
+      else:
+        t2 = t1
 
       t3 = pygame.time.get_ticks() 
       steam.draw(self.roll, self.pitch, self.hdg, self.yaw_d, self.x_d, self.z_world, self.z_d_world,
