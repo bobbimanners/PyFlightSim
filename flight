@@ -28,6 +28,15 @@ import engine
 # https://control.asu.edu/Classes/MMAE441/Aircraft/441Lecture10.pdf
 class Airplane:
 
+  joystick        = -1                  # Joystick object, if device found
+  js_enabled      = False               # True if joystick is enabled
+  
+  axis_pitch      = 1
+  axis_roll       = 0
+  axis_throt      = 2
+  js_cent_pitch   = 0.0                 # For calibrating centre position with Alt-J
+  js_cent_roll    = 0.0
+
   ############################################################################
   # Aircraft & physical constants
   ############################################################################
@@ -165,6 +174,18 @@ class Airplane:
 
   # Build a plane and make it fly!
   def __init__(self):
+
+    pygame.joystick.init()
+    joysticks = [pygame.joystick.Joystick(x) for x in range(pygame.joystick.get_count())]
+    if len(joysticks) == 0:
+      print("No joystick found")
+      self.joystick = ""
+      self.js_enabled = False
+    else:
+      self.joystick = joysticks[0] # Assume we will use the first joystick found
+      print("Found joystick ", self.joystick.get_name())
+      self.js_enabled = True
+
     self.fuel_left  = self.init_tank_fill * self.fuel_capacity / 2 # Litres
     self.fuel_right = self.init_tank_fill * self.fuel_capacity / 2 # Litres
     self.rho = self.rho_0
@@ -480,6 +501,7 @@ class Airplane:
 
   def run(self):
     clock = pygame.time.Clock()
+
     while True:
 #      os.system('clear') # Ugly but will do for now
       print("% Busy: ", clock.get_rawtime() / (self.frame_int * 1000))
@@ -489,6 +511,13 @@ class Airplane:
         if event.type == pygame.QUIT:
           pygame.quit()
           sys.exit()
+
+        # Handle joystick, if enabled
+        if self.js_enabled == True:
+          self.elevator = self.joystick.get_axis(self.axis_pitch) - self.js_cent_pitch
+          self.aileron  = self.joystick.get_axis(self.axis_roll) - self.js_cent_roll
+          self.throttle = (self.joystick.get_axis(self.axis_throt)-1.0) / -2
+
         # Key map mostly inspired by A2FS2
         if event.type == pygame.KEYDOWN:
           if event.key == pygame.K_t:
@@ -543,11 +572,15 @@ class Airplane:
             self.brake = True
           elif event.key == pygame.K_s:
             self.starter = True
-          elif event.key == pygame.K_z: # TODO: Need a better mapping for this
-            if self.autorudder == True:
-              self.autorudder = False
-            else:
-              self.autorudder = True
+          elif event.key == pygame.K_j: # Ctrl-J to toggle joystick
+            if event.mod & pygame.KMOD_LCTRL:
+              self.js_enabled = not self.js_enabled
+            if event.mod & pygame.KMOD_LALT: # Alt-J to centre joystick
+              self.js_cent_pitch = self.joystick.get_axis(self.axis_pitch)
+              self.js_cent_roll  = self.joystick.get_axis(self.axis_roll)
+          elif event.key == pygame.K_z: # Ctrl-Z to toggle autorudder
+            if event.mod & pygame.KMOD_LCTRL:
+              self.autorudder = not self.autorudder
           elif event.key == pygame.K_KP8:
             self.viewangle = 0
           elif event.key == pygame.K_KP9:

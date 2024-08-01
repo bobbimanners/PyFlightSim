@@ -21,6 +21,8 @@ The code is intentionally as simple as possible with a view to being implemented
 
 # Key Mapping
 
+PyFlightSim can be controlled entirely using the keyboard.  If a joystick is plugged in, then it can be used to control the elevators, ailerons and throttle.  If a joystick is detected it is enabled by default and can be disabled using the `Ctrl-J` command.
+
 ## Control Surfaces
 
 The keys for the control surfaces (elevator, ailerons, rudder, flaps and trim) are the same as those from the venerable Sublogic Flight Simulator 2 for the Apple II.  It is based on these adjacent keys:
@@ -57,9 +59,11 @@ The mixture is adjusted using the `[` and `]` keys immediately below.
 
 ## Other
 
-`Z` toggles the "auto-rudder" function.  This is on by default when airborne.  The auto-rudder feature will apply as much rudder as necessary to maintain a balanced turn.  You can disable it in order to perform sideslips and other aerobatic manoevers (such as aileron rolls.)
+`Ctrl-Z` toggles the "auto-rudder" function.  This is on by default when airborne.  The auto-rudder feature will apply as much rudder as necessary to maintain a balanced turn.  You can disable it in order to perform sideslips and other aerobatic manoevers (such as aileron rolls.)
 
 Autorudder turns off when on the ground, so you can steer using the rudder (`C` and `M`).
+
+`Ctrl-J` enables or disables the joystick, if one was detected.  `Alt-J` will record the current joystick position as the centre (allowing joysticks to be calibrated.)
 
 ## View Controls
 
